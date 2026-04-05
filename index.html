@@ -204,6 +204,30 @@ header {
 .mc button:hover { background:var(--surface2); color:var(--gold); }
 .mc button:active { opacity:.7; }
 
+/* ── Map controls ── */
+.mc { position:absolute; top:12px; right:12px; z-index:50; display:flex; flex-direction:column; gap:5px; }
+.mc button { background:var(--surface); border:1px solid var(--border); color:var(--text); width:34px; height:34px; border-radius:8px; font-size:15px; cursor:pointer; box-shadow:0 3px 10px rgba(0,0,0,.5); transition:.15s; display:flex; align-items:center; justify-content:center; }
+.mc button:hover { background:var(--surface2); color:var(--gold); }
+.mc button:active { opacity:.7; }
+
+/* ── Blue dot marker ── */
+.mk-dot {
+  position: absolute; transform: translate(-50%, -50%);
+  cursor: pointer; z-index: 10; pointer-events: all;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.mk-dot-circle {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #3b82f6; border: 3px solid #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,.5);
+  transition: transform .15s;
+}
+.mk-dot:hover .mk-dot-circle { transform: scale(1.35); }
+.mk-dot .mk-label {
+  margin: 0;
+  background: rgba(30,64,175,.85);
+}
+
 #file-in { display:none; }
 </style>
 </head>
@@ -223,6 +247,12 @@ header {
         <option value="voyager">🗺️ Voyager</option>
         <option value="osm">📍 OpenStreetMap</option>
         <option value="topo">⛰️ Topografska</option>
+      </select>
+    </div>
+    <div class="style-select-wrap">
+      <select id="marker-select" onchange="setMarkerStyle(this.value)">
+        <option value="thumb">🖼 Thumbnail</option>
+        <option value="dot">🔵 Marker</option>
       </select>
     </div>
     <button class="btn btn-save" id="btn-save" onclick="saveMap()" disabled title="Spremi kartu kao HTML">
@@ -349,6 +379,13 @@ function parseExifGPS(buffer) {
 //  2. TILE MAP ENGINE
 // ═══════════════════════════════════════════════════════════
 let mapStyle = 'dark';
+let markerStyle = 'thumb'; // 'thumb' | 'dot'
+
+function setMarkerStyle(s) {
+  markerStyle = s;
+  document.getElementById('marker-select').value = s;
+  MAP.renderMarkers();
+}
 
 const TILE_STYLES = {
   dark:    { label: '🌙 Dark Matter', url: (sub,z,x,y) => `https://${sub}.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}.png` },
@@ -446,9 +483,18 @@ const MAP = {
       if (!ph.hasGPS) continue;
       const pos=this.project(ph.lat,ph.lon);
       const div=document.createElement('div');
-      div.className='mk';
-      div.style.left=pos.x+'px'; div.style.top=pos.y+'px';
-      div.innerHTML=`<img src="${ph.b64||ph.url}" alt=""><div class="mk-tail"></div><span class="mk-label">${esc(ph.label||ph.name)}</span>`;
+      const label=esc(ph.label||ph.name);
+
+      if (markerStyle==='dot') {
+        div.className='mk-dot';
+        div.style.left=pos.x+'px'; div.style.top=pos.y+'px';
+        div.innerHTML=`<div class="mk-dot-circle"></div><span class="mk-label">${label}</span>`;
+      } else {
+        div.className='mk';
+        div.style.left=pos.x+'px'; div.style.top=pos.y+'px';
+        div.innerHTML=`<img src="${ph.b64||ph.url}" alt=""><div class="mk-tail"></div><span class="mk-label">${label}</span>`;
+      }
+
       div.addEventListener('click',e=>{e.stopPropagation();showPopup(ph,pos);highlightItem(ph);});
       ph._mkEl=div;
       this.markerEl.appendChild(div);
@@ -546,8 +592,8 @@ async function handleFiles(fileList) {
   showProg(0,files.length);
   const startIdx = photos.length; // index before adding new ones
   for(let i=0;i<files.length;i++){await processFile(files[i]);setProg(i+1,files.length);}
-  // Auto-assign Kolodko_XX labels (renumber ALL photos globally)
-  photos.forEach((ph,i)=>{ if(!ph.label) ph.label='Kolodko_'+String(i+1).padStart(2,'0'); });
+  // Assign label = filename without extension (only for newly added, not already renamed)
+  photos.forEach(ph=>{ if(!ph.label) ph.label=ph.name.replace(/\.[^.]+$/,''); });
   hideProg(); updateStats(); renderSidebar(); MAP.render(); fitAll();
 }
 
@@ -598,8 +644,6 @@ function removePhoto(idx) {
   URL.revokeObjectURL(ph.url);
   if (activeEl===ph._li) activeEl=null;
   photos.splice(idx,1);
-  // Renumber labels
-  photos.forEach((p,i)=>{ p.label='Kolodko_'+String(i+1).padStart(2,'0'); });
   closePopup();
   updateStats(); renderSidebar(); MAP.render();
   if (photos.filter(p=>p.hasGPS).length===0)
@@ -859,7 +903,7 @@ function startEdit(idx) {
     const val=inp.value.trim()||current;
     ph.label=val;
     nameEl.textContent=val;
-    // Update marker label in place
+    // Update marker label in place (works for both thumb and dot modes)
     if(ph._mkEl){
       const lbl=ph._mkEl.querySelector('.mk-label');
       if(lbl) lbl.textContent=val;
